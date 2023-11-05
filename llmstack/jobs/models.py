@@ -100,7 +100,7 @@ def success_callback(job, connection, result, *args, **kwargs):
     task = get_scheduled_task(job.meta.get('task_type', None), job.meta.get('scheduled_task_id'))
     if task is None:
         return 
-    
+
     task_log = TaskRunLog.objects.filter(job_id=job.id, task_id=task.id).first()
     if task_log is None:
         logger.error(f'Could not find task log for job {job.id}')
@@ -108,25 +108,25 @@ def success_callback(job, connection, result, *args, **kwargs):
         task_log.status = 'succeeded'
         task_log.result = {'result': result}
         task_log.save()
-    
+
     task.job_id = None
     # If task is a scehduledJob we have already ran the job no need to schedule it again
-    task.save(schedule_job= False if task.TASK_TYPE == 'ScheduledJob' else True) 
+    task.save(schedule_job=task.TASK_TYPE != 'ScheduledJob') 
     
 def stopped_callback(job, connection):
     task = get_scheduled_task(job.meta.get('task_type', None), job.meta.get('scheduled_task_id'))
     if task is None:
         return
-    
+
     task_log = TaskRunLog.objects.filter(job_id=job.id, task_id=task.id).first()
     if task_log is None:
         logger.error(f'Could not find task log for job {job.id}')
     else:
         task_log.status = 'stopped'
         task_log.save()
-    
+
     task.job_id = None
-    task.save(chedule_job= False if task.TASK_TYPE == 'ScheduledJob' else True)
+    task.save(chedule_job=task.TASK_TYPE != 'ScheduledJob')
 
 def run_task(task_model: str, task_id: int):
     job = get_current_job()
@@ -208,8 +208,8 @@ class BaseTask(models.Model):
         path = self.callable.split('.')
         module = importlib.import_module('.'.join(path[:-1]))
         func = getattr(module, path[-1])
-        if callable(func) is False:
-            raise TypeError("'{}' is not callable".format(self.callable))
+        if not callable(func):
+            raise TypeError(f"'{self.callable}' is not callable")
         return func
     
     def parse_args(self):
@@ -247,7 +247,7 @@ class BaseTask(models.Model):
     def function_string(self):
         args = self.callable_args or ''
         kwargs = self.callable_kwargs or ''
-        return '{}({}, {})'.format(self.callable, args, kwargs)
+        return f'{self.callable}({args}, {kwargs})'
         
     def _next_job_id(self):
         return f"{str(uuid.uuid4())}"
@@ -270,7 +270,7 @@ class BaseTask(models.Model):
         ready to be scheduled.
         """
         if self.is_scheduled() or not self.enabled:
-            logger.debug('Task is already scheduled or disabled: {}'.format(self))
+            logger.debug(f'Task is already scheduled or disabled: {self}')
             return False
         return True
     
@@ -324,7 +324,7 @@ class BaseTask(models.Model):
         return utc(self.scheduled_time) if settings.USE_TZ else self.scheduled_time       
     
     def to_dict(self):
-        res = dict(
+        return dict(
             uuid=self.uuid,
             model=self.TASK_TYPE,
             task_category=self.task_category,
@@ -342,15 +342,13 @@ class BaseTask(models.Model):
             interval=getattr(self, 'interval', None),
             interval_unit=getattr(self, 'interval_unit', None),
         )
-        return res
     
     def __str__(self):
         return f'{self.TASK_TYPE}:{self.name}:func={self.callable}'
     
     def save(self, **kwargs):
         schedule_job = kwargs.pop('schedule_job', True)
-        update_fields = kwargs.get('update_fields', None)
-        if update_fields:
+        if update_fields := kwargs.get('update_fields', None):
             kwargs['update_fields'] = set(update_fields).union({'updated_at'})
         super(BaseTask, self).save(**kwargs)
         if schedule_job:
@@ -365,7 +363,7 @@ class BaseTask(models.Model):
         try:
             self.callable_func()
         except:
-            logger.error('Invalid callable: {}'.format(self.callable))
+            logger.error(f'Invalid callable: {self.callable}')
             raise ValidationError({
                 'callable': ValidationError('Invalid callable, must be importable', code='invalid')
             })
@@ -373,10 +371,14 @@ class BaseTask(models.Model):
     def _clean_queue(self):
         queue_keys = settings.RQ_QUEUES.keys()
         if self.queue not in queue_keys:
-            raise ValidationError({
-                'queue': ValidationError(
-                    'Invalid queue, must be one of: {}'.format(', '.join(queue_keys)), code='invalid')
-            })
+            raise ValidationError(
+                {
+                    'queue': ValidationError(
+                        f"Invalid queue, must be one of: {', '.join(queue_keys)}",
+                        code='invalid',
+                    )
+                }
+            )
     def clean(self):
         self._clean_callable()
         self._clean_queue()
@@ -432,7 +434,7 @@ class RepeatableJob(ScheduledTimeMixin, BaseTask):
     interval_unit = models.CharField(max_length=12, choices=UNITS, default='hours')
 
     def interval_display(self):
-        return '{} {}'.format(self.interval, self.get_interval_unit_display())
+        return f'{self.interval} {self.get_interval_unit_display()}'
 
     def interval_seconds(self):
         kwargs = {
@@ -489,9 +491,7 @@ class RepeatableJob(ScheduledTimeMixin, BaseTask):
     def can_be_scheduled(self):
         if super(RepeatableJob, self).can_be_scheduled() is False:
             return False
-        if self._schedule_time() < timezone.now():
-            return False
-        return True
+        return self._schedule_time() >= timezone.now()
             
     class Meta:
         verbose_name = 'Repeatable Job'
@@ -504,8 +504,7 @@ def get_next_cron_time(cron_string) -> timezone.datetime:
     with a cron string"""
     now = timezone.now()
     itr = croniter.croniter(cron_string, now)
-    next_itr = itr.get_next(timezone.datetime)
-    return next_itr
+    return itr.get_next(timezone.datetime)
 
 class CronJob(BaseTask):
     TASK_TYPE = 'CronJob'

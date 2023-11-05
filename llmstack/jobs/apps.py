@@ -34,5 +34,5 @@ class JobsConfig(AppConfig):
     def reschedule_jobs(self, jobs):
         for job in jobs:
             if job.is_scheduled() is False:
-                print('Scheduling job: {}'.format(job))
+                print(f'Scheduling job: {job}')
                 # job.save()

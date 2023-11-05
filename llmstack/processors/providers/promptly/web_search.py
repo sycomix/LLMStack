@@ -103,11 +103,9 @@ class WebSearch(ApiProcessorInterface[WebSearchInput, WebSearchOutput, WebSearch
         search_url = f'https://www.google.com/search?q={query}'
 
         results = async_to_sync(self._get_results)(search_url, k)
-        
+
         async_to_sync(output_stream.write)(WebSearchOutput(
             results=results
         ))
 
-        output = output_stream.finalize()
-
-        return output
+        return output_stream.finalize()
