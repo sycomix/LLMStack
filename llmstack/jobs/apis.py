@@ -33,10 +33,10 @@ class JobsViewSet(viewsets.ViewSet):
         return DRFResponse(status=200, data=jobs)
     
     def get(self, request, uid):
-        job = self._get_job_by_uuid(uid, request=request)
-        if not job:
+        if job := self._get_job_by_uuid(uid, request=request):
+            return DRFResponse(status=200, data=job.to_dict())
+        else:
             return DRFResponse(status=404, data={'message': f"No job found with uuid: {uid}"})
-        return DRFResponse(status=200, data=job.to_dict())
         
     def delete(self, request, uid):
         logger.info(f"Deleting job with uuid: {uid}")
@@ -79,19 +79,24 @@ class AppRunJobsViewSet(viewsets.ViewSet):
         data = request.data
         app_uuid = data.get('app_uuid')
         app_detail = AppViewSet().get(request=request, uid=app_uuid).data
-        
+
         app_name = app_detail.get('name')
-        app_id = app_detail.get('uuid')        
+        app_id = app_detail.get('uuid')
         frequency = data.get('frequency')
         frequency_type = frequency.get('type')
-        
+
         if frequency_type not in ['run_once', 'repeat', 'cron']:
             return DRFResponse(status=400, data={'message': f"Unknown frequency type: {frequency.get('type')}"})
-        
-        scheduled_time = None 
-        if frequency_type == 'run_once' or frequency_type == 'repeat':
+
+        scheduled_time = None
+        if frequency_type in ['run_once', 'repeat']:
             if not frequency.get('start_date') or not frequency.get('start_time'):
-                return DRFResponse(status=400, data={'message': f"run_once and repeat frequency requires a start_date and start_time"})
+                return DRFResponse(
+                    status=400,
+                    data={
+                        'message': "run_once and repeat frequency requires a start_date and start_time"
+                    },
+                )
             scheduled_time = timezone.make_aware(datetime.strptime(f"{frequency.get('start_date')}T{frequency.get('start_time')}", "%Y-%m-%dT%H:%M:%S"), timezone.get_current_timezone())
 
         job_args = {
@@ -107,34 +112,49 @@ class AppRunJobsViewSet(viewsets.ViewSet):
             'scheduled_time': scheduled_time,
             'task_category': 'app_run',
         }
-                
+
         if frequency_type == 'run_once':
             job = ScheduledJob(**job_args)
             job.save()
-            
+
         elif frequency_type == 'repeat':
             try:
                 interval = int(frequency.get('interval', 0))
                 if not interval:
-                    return DRFResponse(status=400, data={'message': f"repeat frequency requires an interval greater than 0"})
+                    return DRFResponse(
+                        status=400,
+                        data={
+                            'message': "repeat frequency requires an interval greater than 0"
+                        },
+                    )
             except:
-                return DRFResponse(status=400, data={'message': f"repeat frequency requires an interval greater than 0"})
-                        
+                return DRFResponse(
+                    status=400,
+                    data={
+                        'message': "repeat frequency requires an interval greater than 0"
+                    },
+                )
+
             job = RepeatableJob(interval=interval, interval_unit='days', **job_args)
             job.save()
-            
+
         elif frequency_type == 'cron':
             cron_expression = frequency.get('cron_expression')
             if not cron_expression:
-                return DRFResponse(status=400, data={'message': f"cron frequency requires a cron_expression"})
+                return DRFResponse(
+                    status=400,
+                    data={'message': "cron frequency requires a cron_expression"},
+                )
             # Validate if cron expression is valid
             if not croniter.croniter.is_valid(cron_expression):
-                return DRFResponse(status=400, data={'message': f"cron expression is not valid"})
-            
+                return DRFResponse(
+                    status=400, data={'message': "cron expression is not valid"}
+                )
+
             job = CronJob(cron_string=cron_expression, **job_args)
             job.save()
-        
-        
+
+
         return DRFResponse(status=204)
     
 
@@ -148,33 +168,38 @@ class DataSourceRefreshJobsViewSet(viewsets.ViewSet):
         data = request.data
         datasource_entries = data.get('datasource_entries')
         if not datasource_entries or not isinstance(datasource_entries, list) or len(datasource_entries) == 0:
-            return DRFResponse(status=400, data={'message': f"datasource_entries is empty"})
-        
+            return DRFResponse(status=400, data={'message': "datasource_entries is empty"})
+
         job_name = request.data.get('job_name')
         if not job_name:
-            return DRFResponse(status=400, data={'message': f"job_name is required"})
-        
+            return DRFResponse(status=400, data={'message': "job_name is required"})
+
         entries = DataSourceEntryViewSet().multiGet(request=request, uids=datasource_entries).data
         if len(entries) != len(datasource_entries):
-            return DRFResponse(status=400, data={'message': f"Invalid datasource_entries"})
-        
+            return DRFResponse(status=400, data={'message': "Invalid datasource_entries"})
+
         datasources = list(map(lambda entry: entry.get('datasource'), entries))
         # make sure request user has access to the datasource
 
         for source in datasources:
             if DataSourceViewSet().get(request=request, uid=source['uuid']).status_code != 200:
-                return DRFResponse(status=400, data={'message': f"Invalid datasource_entries"})
-        
+                return DRFResponse(status=400, data={'message': "Invalid datasource_entries"})
+
         frequency = data.get('frequency')
         frequency_type = frequency.get('type')
         if frequency_type not in ['run_once', 'repeat', 'cron']:
             return DRFResponse(status=400, data={'message': f"Unknown frequency type: {frequency.get('type')}"})
-        
-        
-        scheduled_time = None 
-        if frequency_type == 'run_once' or frequency_type == 'repeat':
+
+
+        scheduled_time = None
+        if frequency_type in ['run_once', 'repeat']:
             if not frequency.get('start_date') or not frequency.get('start_time'):
-                return DRFResponse(status=400, data={'message': f"run_once and repeat frequency requires a start_date and start_time"})
+                return DRFResponse(
+                    status=400,
+                    data={
+                        'message': "run_once and repeat frequency requires a start_date and start_time"
+                    },
+                )
             scheduled_time = timezone.make_aware(datetime.strptime(f"{frequency.get('start_date')}T{frequency.get('start_time')}", "%Y-%m-%dT%H:%M:%S"), timezone.get_current_timezone())
 
         job_args = {
@@ -189,32 +214,47 @@ class DataSourceRefreshJobsViewSet(viewsets.ViewSet):
             'scheduled_time': scheduled_time,
             'task_category': 'datasource_refresh',
         }
-        
+
         if frequency_type == 'run_once':
             job = ScheduledJob(**job_args)
             job.save()
-        
+
         elif frequency_type == 'repeat':
             try:
                 interval = int(frequency.get('interval', 0))
                 if not interval:
-                    return DRFResponse(status=400, data={'message': f"repeat frequency requires an interval greater than 0"})
+                    return DRFResponse(
+                        status=400,
+                        data={
+                            'message': "repeat frequency requires an interval greater than 0"
+                        },
+                    )
             except:
-                return DRFResponse(status=400, data={'message': f"repeat frequency requires an interval greater than 0"})
-                        
+                return DRFResponse(
+                    status=400,
+                    data={
+                        'message': "repeat frequency requires an interval greater than 0"
+                    },
+                )
+
             job = RepeatableJob(interval=interval, interval_unit='days', **job_args)
             job.save()
-        
+
         elif frequency_type == 'cron':
             cron_expression = frequency.get('cron_expression')
             if not cron_expression:
-                return DRFResponse(status=400, data={'message': f"cron frequency requires a cron_expression"})
+                return DRFResponse(
+                    status=400,
+                    data={'message': "cron frequency requires a cron_expression"},
+                )
             # Validate if cron expression is valid
             if not croniter.croniter.is_valid(cron_expression):
-                return DRFResponse(status=400, data={'message': f"cron expression is not valid"})
-            
+                return DRFResponse(
+                    status=400, data={'message': "cron expression is not valid"}
+                )
+
             job = CronJob(cron_string=cron_expression, **job_args)
             job.save()
-        
+
         return DRFResponse(status=204)
     
